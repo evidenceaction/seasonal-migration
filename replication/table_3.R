@@ -10,7 +10,7 @@ library(yaml)
 
 tryCatch({
   config <- yaml.load_file("local_config.yaml")
-  registerDoParallel(cores=config$cores - 1)
+  registerDoParallel(cores=config$cores)
 }, error=function(err) {
   registerDoSEQ()
 })
@@ -26,12 +26,16 @@ block.bootstrap.factory <- function(cluster) {
   }
 }
 
-bootstrap.c <- function(original.data, regress.fun, bootstrap.fun, num.resample=1000) {
+bootstrap.c <- function(original.data, regress.fun, bootstrap.fun, original.test.results, num.resample=1000) {
   foreach(seq_len(num.resample), .combine=cbind) %dopar% {
     bootstrap.fun(original.data) %>% 
-      regress.fun %>% 
-      extract("t.value") %>%
-      abs
+      regress.fun %>%
+      left_join(original.test.results %>% 
+                  select(depvar, t.value) %>% 
+                  rename(origin.t.value=t.value),
+                .,
+                by="depvar") %>%
+      transmute(centered.stat=abs((t.value - origin.t.value)))
   } 
 }
 
@@ -48,7 +52,7 @@ regress.fun.factory <- function(depvars, controls, cluster, coef) {
   }
 }
 
-round3.data <- read.dta("~/Data/mobarak_seasonal_migration/Round3.dta") %>% 
+round3.data <- read.dta(paste0(config$data_path, "/mobarak_seasonal_migration/Round3.dta")) %>% 
   filter(average_food3 < 2500)
 
 depvars_T1_09 <- c("average_food2", "average_nonfood2", "average_exp2", "average_calorie_perday2", "average_protein_perday2")
@@ -72,19 +76,22 @@ test.results <- foreach(dep.var=all.depvars, .combine=rbind) %do% {
 } %>%
   arrange(desc(abs(t.value)))
 
-critical.c <- bootstrap.c(round3.data, 
+centered.stats <- bootstrap.c(round3.data, 
                           regress.fun.factory(depvars=test.results$depvar, c("upazila", controls.r3), all.treat, cluster="cluster.id"), 
                           block.bootstrap.factory("village"),
-                          num.resample=500) %>% 
+                          test.results,
+                          num.resample=1000) %>% 
   set_names(paste(names(.), seq_len(ncol(.)), sep="."))
 
-alpha <- 0.05
+alpha <- 0.1
 
-critical.c <- foreach(start=seq_len(nrow(critical.c))) %dopar% {
-  critical.c[seq(start, nrow(critical.c)), ] %>% 
-    summarise_each(funs(max)) %>% 
-    quantile(probs=alpha/2)
-} %>% 
-  unlist
+max.w <- foreach(start=seq_len(nrow(centered.stats)), .combine=rbind) %dopar% {
+  centered.stats[seq(start, nrow(centered.stats)), ] %>% 
+    summarise_each(funs(max)) 
+} 
 
-test.results %<>% cbind(critical.c)
+critical.pts <- max.w %>% 
+  as.matrix %>% 
+  aaply(1, quantile, probs=1 - alpha)
+
+test.results %<>% mutate(critical.c=critical.pts)
