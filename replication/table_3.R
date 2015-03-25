@@ -31,11 +31,13 @@ bootstrap.c <- function(original.data, regress.fun, bootstrap.fun, original.test
     bootstrap.fun(original.data) %>% 
       regress.fun %>%
       left_join(original.test.results %>% 
-                  select(depvar, t.value) %>% 
-                  rename(origin.t.value=t.value),
+#                   select(depvar, t.value) %>% 
+#                   rename(origin.t.value=t.value),
+                  select(depvar, est) %>% 
+                  rename(origin.est=est),
                 .,
                 by="depvar") %>%
-      transmute(centered.stat=abs((t.value - origin.t.value)))
+      transmute(centered.stat=abs((est - origin.est)/se))
   } 
 }
 
@@ -83,7 +85,7 @@ centered.stats <- bootstrap.c(round3.data,
                           num.resample=1000) %>% 
   set_names(paste(names(.), seq_len(ncol(.)), sep="."))
 
-alpha <- 0.1
+alpha <- c(0.10, 0.05)
 
 max.w <- foreach(start=seq_len(nrow(centered.stats)), .combine=rbind) %dopar% {
   centered.stats[seq(start, nrow(centered.stats)), ] %>% 
@@ -92,6 +94,8 @@ max.w <- foreach(start=seq_len(nrow(centered.stats)), .combine=rbind) %dopar% {
 
 critical.pts <- max.w %>% 
   as.matrix %>% 
-  aaply(1, quantile, probs=1 - alpha)
+  aaply(1, quantile, probs=1 - alpha) %>%
+  set_colnames(paste0("critical.c.", 100 * alpha)) %>% 
+  as.data.frame
 
-test.results %<>% mutate(critical.c=critical.pts)
+(test.results %<>% bind_cols(critical.pts))
