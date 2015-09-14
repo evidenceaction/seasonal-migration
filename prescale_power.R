@@ -35,7 +35,12 @@ get.resampler <- function(.data, branch="RDRS.Office.Location.Name", num.village
     incentive.resampler("cash", num.cash, cluster.size) %>% 
       bind_rows(incentive.resampler("credit", num.loan, cluster.size)) %>% 
       bind_rows(incentive.resampler(c("control", "info"), num.control, cluster.size)) %>% # Treating "info" treatment as control
-      inner_join(select(., resample.branch.id) %>% unique %>% mutate(fake.incentivized=sample(c(rep.int(1, num.cash + num.loan), rep(0, num.control)))), by="resample.branch.id")
+      inner_join(select(., resample.branch.id) %>% 
+                   unique %>% 
+                   mutate(fake.incentive=sample(c(rep("cash", num.cash), rep("credit", num.loan), rep("control", num.control))), # Adding a "fake" treatment dummies to evaluate rejection rates (Type I error)
+                          fake.incentivized=1*(fake.incentive != "control"), 
+                          fake.cash=1*(fake.incentive == "cash")), 
+                 by="resample.branch.id") 
   }
   
   return(inner.resampler)
@@ -46,16 +51,20 @@ resample.from.data <- round2.data %>%
 
 resampler <- get.resampler(resample.from.data)
 
-original.regress.fun <- regress.fun.factory(depvars="migrant", controls=NULL, cluster=c("village", "hhid"), coef=c("incentivized", "cash"))
-# regress.fun <- regress.fun.factory(depvars="migrant", controls=NULL, cluster=c("resample.branch.id", "resample.hh.id"), coef=c("cash", "credit", "fake.incentivized")) #coef="incentivized")
-# regress.fun <- regress.fun.factory(depvars="migrant", controls=NULL, cluster=c("resample.branch.id", "resample.hh.id"), coef=c("cash", "info", "fake.incentivized")) #coef="incentivized")
-# regress.fun <- regress.fun.factory(depvars="migrant", controls=NULL, cluster=c("resample.branch.id", "resample.hh.id"), coef=c("cash")) 
-regress.fun <- regress.fun.factory(depvars="migrant", controls=NULL, cluster=c("resample.branch.id", "resample.hh.id"), coef=c("incentivized", "cash")) 
+original.regress.fun <- regress.fun.factory(depvars=c("migrant", "ngo.help.migrate"), controls=NULL, out.intercept="(Intercept)", cluster=c("village", "hhid"), coef=c("incentivized", "cash"))
+regress.fun <- regress.fun.factory(depvars=c("migrant", "ngo.help.migrate"), controls=NULL, cluster=c("resample.branch.id", "resample.hh.id"), coef=c("incentivized", "cash")) 
+fake.regress.fun <- regress.fun.factory(depvars=c("migrant", "ngo.help.migrate"), controls=NULL, cluster=c("resample.branch.id", "resample.hh.id"), coef=c("fake.incentivized", "fake.cash")) 
 
 round2.data %>% filter(!is.na(village)) %>% original.regress.fun
 
-resample.est.data <- foreach(rep.id=1:1000, .combine=bind_rows, .verbose=TRUE) %dopar% {
-  resampler(15, 15, 30, 20) %>% 
-    regress.fun %>% 
+resample.est.data <- foreach(rep.id=1:10000, .combine=bind_rows) %dopar% {
+  resample.data <- resampler(15, 15, 30, 20) 
+  
+  regress.fun(resample.data) %>% 
+    bind_rows(fake.regress.fun(resample.data)) %>%
     mutate(rep.id=rep.id) 
 }
+
+sim.sum <- resample.est.data %>% 
+  group_by(depvar, coef) %>% 
+  summarize_each(funs(mean, sd), est, starts_with("se"))

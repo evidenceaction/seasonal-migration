@@ -38,21 +38,52 @@ bootstrap.c <- function(original.data, regress.fun, bootstrap.fun, original.test
   } 
 }
 
-regress.fun.factory <- function(depvars, controls, cluster, coef, se.types=c("HC0", "HC1", "HC2", "HC3")) {
-  function(.data) {
+regress.fun.factory <- function(depvars, controls, cluster, coef, out.intercept=NULL, se.types=c("HC0", "HC1", "HC2", "HC3"), bootstrap.rep=500) {
+  out.coef <- c(coef, out.intercept)
+  
+  this.reg.fun <- function(.data) {
     inner.reg <- function(depvar) {
-      reg.res <- plm(formula(sprintf("%s ~ %s", depvar, paste(c(coef, controls), collapse=" + "))), data=.data, model="pooling", index=cluster) 
+      inner.reg.fun <- function(.inner.data, .depvar) plm(formula(sprintf("%s ~ %s", .depvar, paste(c(coef, controls), collapse=" + "))), data=.inner.data, model="pooling", index=cluster) 
+      reg.res <- inner.reg.fun(.data, depvar) 
       
-      # reg.res$coefficients %>%
+      se.estimator <- function(se.type, .reg.res) {
+        if (se.type == "wild") {
+          reg.model <- reg.res$model
+          reg.model[, 1] <- 1
+          fitted.and.resid <- (as.matrix(reg.model) %*% reg.res$coefficients) %>% 
+            as.data.frame %>% 
+            set_names("fitted") %>%
+            mutate(residual=residuals(reg.res))
+          
+          .data %<>% merge(fitted.and.resid, by="row.names")
+          
+          se.vec <- foreach(seq_len(bootstrap.rep), .combine=rbind) %dopar% {
+            .data %>%
+              group_by_(cluster[1]) %>%
+              mutate(wild.depvar=fitted + (sample(c(1, -1), 1) * residual)) %>%
+              inner.reg.fun(.depvar="wild.depvar") %>%
+              coeftest(vcov=plm::vcovHC(., type="HC2", cluster="group")) %>%
+              magrittr::extract(, "Estimate")
+          } %>%
+            as.data.frame %>%
+            summarize_each(funs(sd)) %>%
+            unlist
+          
+          return(se.vec)
+        } else {
+          plm::vcovHC(reg.res, type=se.type) %>% diag %>% sqrt
+        }
+      }
+      
       reg.res %>%
         coeftest %>%
-        magrittr::extract(coef, , drop=FALSE) %>%
+        magrittr::extract(out.coef, , drop=FALSE) %>%
         as.data.frame %>%
         set_names(c("est", "se.conv", "t.value.conv", "p.value.conv")) %>%
         mutate(coef=str_extract(rownames(.), "((?<=\\[T\\.)[^\\]]+)|[^\\[\\]]+$")) %>%
-        bind_cols(maply(se.types, function(se.type) plm::vcovHC(reg.res, type=se.type) %>% diag %>% sqrt) %>% 
+        bind_cols(maply(se.types, se.estimator, reg.res) %>% 
                     t %>% 
-                    magrittr::extract(coef, , drop=FALSE) %>%
+                    magrittr::extract(out.coef, , drop=FALSE) %>%
                     as.data.frame %>%
                     set_names(paste0("se.", se.types))) %>%
         mutate(se=apply(select(., starts_with("se.")), 1, max),
@@ -65,6 +96,8 @@ regress.fun.factory <- function(depvars, controls, cluster, coef, se.types=c("HC
       do(inner.reg(.$depvar)) %>%
       ungroup 
   }
+  
+  return(this.reg.fun)
 }
 
 qr.fun.factory <- function(depvars, controls, cluster, coef, tau=0.5, bootstrap.se=TRUE, num.resample=1000) {
