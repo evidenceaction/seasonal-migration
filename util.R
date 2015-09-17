@@ -8,6 +8,7 @@ library(foreign)
 library(plm)
 library(quantreg)
 library(AER)
+library(ivpack)
 library(lmtest)
 library(car)
 library(lme4)
@@ -38,16 +39,34 @@ bootstrap.c <- function(original.data, regress.fun, bootstrap.fun, original.test
   } 
 }
 
-regress.fun.factory <- function(depvars, controls, cluster, coef, out.intercept=NULL, se.types=c("HC0", "HC1", "HC2", "HC3"), bootstrap.rep=500) {
+regress.fun.factory <- function(depvars, controls, cluster, coef, iv=NULL, out.intercept=NULL, se.types=c("HC0", "HC1", "HC2", "HC3"), bootstrap.rep=500) {
   out.coef <- c(coef, out.intercept)
   
   this.reg.fun <- function(.data) {
     inner.reg <- function(depvar) {
-      inner.reg.fun <- function(.inner.data, .depvar) plm(formula(sprintf("%s ~ %s", .depvar, paste(c(coef, controls), collapse=" + "))), data=.inner.data, model="pooling", index=cluster) 
+      if (is.null(iv)) {
+        inner.reg.fun <- function(.inner.data, .depvar) plm(formula(sprintf("%s ~ %s", .depvar, paste(c(coef, controls), collapse=" + "))), data=.inner.data, model="pooling", index=cluster) 
+      } else {
+        se.types <- "iv"
+        inner.reg.fun <- function(.inner.data, .depvar) ivreg(formula(sprintf("%s ~ %s | %s", 
+                                                                            .depvar, 
+                                                                            paste(c(coef, controls), collapse=" + "),
+                                                                            paste(c(iv, controls), collapse=" + "))),
+                                                            data=.inner.data)
+                                                              
+#         inner.reg.fun <- function(.inner.data, .depvar) plm(formula(sprintf("%s ~ %s | . - %s + %s", 
+#                                                                             .depvar, 
+#                                                                             paste(c(coef, controls), collapse=" + "),
+#                                                                             paste(coef, collapse=" - "), 
+#                                                                             paste(iv, collapse=" + "))), 
+#                                                             data=.inner.data, model="pooling", index=cluster) 
+      }
+      
       reg.res <- inner.reg.fun(.data, depvar) 
       
       se.estimator <- function(se.type, .reg.res) {
         if (se.type == "wild") {
+          # BUGBUG doesn't work is factors
           reg.model <- reg.res$model
           reg.model[, 1] <- 1
           fitted.and.resid <- (as.matrix(reg.model) %*% reg.res$coefficients) %>% 
@@ -70,6 +89,9 @@ regress.fun.factory <- function(depvars, controls, cluster, coef, out.intercept=
             unlist
           
           return(se.vec)
+        } else if (se.type == "iv") {
+          clx(reg.res, reg.res$model %>% merge(.data[, cluster[1]], by="row.names") %>% select_(cluster[1]) %>% unlist) %>% 
+            magrittr::extract(, "Std. Error")
         } else {
           plm::vcovHC(reg.res, type=se.type) %>% diag %>% sqrt
         }
@@ -81,7 +103,7 @@ regress.fun.factory <- function(depvars, controls, cluster, coef, out.intercept=
         as.data.frame %>%
         set_names(c("est", "se.conv", "t.value.conv", "p.value.conv")) %>%
         mutate(coef=str_extract(rownames(.), "((?<=\\[T\\.)[^\\]]+)|[^\\[\\]]+$")) %>%
-        bind_cols(maply(se.types, se.estimator, reg.res) %>% 
+        bind_cols(maply(se.types, se.estimator, reg.res, .drop=FALSE) %>% 
                     t %>% 
                     magrittr::extract(out.coef, , drop=FALSE) %>%
                     as.data.frame %>%
@@ -205,7 +227,7 @@ iv.regress.fun.factory <- function(depvars, controls, cluster, endo.var, iv, boo
 #       do(plm(formula(sprintf("%s ~ %s | . - %s + %s", 
 #                              .$depvar, 
 #                              paste(c(endo.var, controls), collapse=" + "), 
-#                              paste(endo.var, collapse=" + "), 
+#                              paste(endo.var, collapse=" - "), 
 #                              paste(iv, collapse=" + "))), data=.data, model="pooling", index=cluster) %>%
 #            coeftest(vcov=plm::vcovHC(., cluster="group")) %>% 
            # coeftest %>%
@@ -352,6 +374,16 @@ predict.rob <- function(x, vcov.=vcov(x), signif.level=0.05, newdata) {
               se.fit=se.fit,
               fit.max=fit + merr,
               fit.min=fit - merr))
+}
+
+vcov.clx <- function(fm, cluster) { # Taken from ivpack::clx()
+  dfcw <- 1
+  M <- length(unique(cluster))
+  N <- length(cluster)
+  dfc <- (M/(M - 1)) * ((N - 1)/(N - fm$rank))
+  u <- apply(estfun(fm), 2, function(x) tapply(x, cluster, sum))
+  
+  dfc * sandwich(fm, meat. = crossprod(u)/N) * dfcw
 }
 
 icc <- function(.data, lhs, cluster, rhs=NULL) {
