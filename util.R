@@ -3,9 +3,12 @@ library(dplyr)
 library(magrittr)
 library(tidyr)
 library(stringr)
+library(purrr)
 library(foreach)
 library(foreign)
+library(readstata13)
 library(plm)
+library(systemfit)
 library(quantreg)
 library(AER)
 library(ivpack)
@@ -39,7 +42,7 @@ bootstrap.c <- function(original.data, regress.fun, bootstrap.fun, original.test
   } 
 }
 
-regress.fun.factory <- function(depvars, controls, cluster, coef, iv=NULL, out.intercept=NULL, se.types=c("HC0", "HC1", "HC2", "HC3"), bootstrap.rep=500) {
+regress.fun.factory <- function(depvars, controls, cluster, coef, iv=NULL, out.intercept=NULL, se.types=c("HC2", "HC3"), bootstrap.rep=500) {
   out.coef <- c(coef, out.intercept)
   
   this.reg.fun <- function(.data) {
@@ -93,7 +96,7 @@ regress.fun.factory <- function(depvars, controls, cluster, coef, iv=NULL, out.i
           clx(reg.res, reg.res$model %>% merge(.data[, cluster[1]], by="row.names") %>% select_(cluster[1]) %>% unlist) %>% 
             magrittr::extract(, "Std. Error")
         } else {
-          plm::vcovHC(reg.res, type=se.type) %>% diag %>% sqrt
+          tryCatch(plm::vcovHC(reg.res, type=se.type, cluster="group") %>% diag %>% sqrt, error=function(e) NULL)
         }
       }
       
@@ -108,9 +111,10 @@ regress.fun.factory <- function(depvars, controls, cluster, coef, iv=NULL, out.i
                     magrittr::extract(out.coef, , drop=FALSE) %>%
                     as.data.frame %>%
                     set_names(paste0("se.", se.types))) %>%
-        mutate(se=apply(select(., starts_with("se.")), 1, max),
-               t.value=est/se,
-               p.value=pnorm(abs(t.value), lower.tail=FALSE) * 2)
+        mutate(se.max=apply(select(., starts_with("se.")), 1, max)) %>% #,
+#                t.value=est/se,
+#                p.value=pnorm(abs(t.value), lower.tail=FALSE) * 2) %>% 
+        mutate_each(funs(t.value=est/., p.value=pnorm(abs(est/.), lower.tail=FALSE) * 2), starts_with("se."))
     }
     
     data_frame(depvar=depvars) %>% 
@@ -213,7 +217,7 @@ iv.qr.fun.factory <- function(depvars, controls, cluster, endo.var, iv, tau=0.5,
   return(self.fun)
 }
 
-iv.regress.fun.factory <- function(depvars, controls, cluster, endo.var, iv, bootstrap.se=TRUE, num.resample=1000) {
+iv.regress.fun.factory <- function(depvars, controls, cluster, endo.var, iv, bootstrap.se=FALSE, num.resample=1000) {
   resampler <- block.bootstrap.factory(cluster)
   
   self.fun <- function(.data, .bootstrap.se=bootstrap.se) tryCatch({
@@ -223,7 +227,8 @@ iv.regress.fun.factory <- function(depvars, controls, cluster, endo.var, iv, boo
                              .$depvar, 
                              paste(c(endo.var, controls), collapse=" + "), 
                              paste(c(iv, controls), collapse=" + "))), data=.data) %>%
-           coefficients %>% 
+           coeftest(vcov=vcov.clx(., .data %>% select_(cluster))) %>% 
+           # coefficients %>% 
 #       do(plm(formula(sprintf("%s ~ %s | . - %s + %s", 
 #                              .$depvar, 
 #                              paste(c(endo.var, controls), collapse=" + "), 
@@ -232,11 +237,11 @@ iv.regress.fun.factory <- function(depvars, controls, cluster, endo.var, iv, boo
 #            coeftest(vcov=plm::vcovHC(., cluster="group")) %>% 
            # coeftest %>%
            # coeftest(vcov=vcovHC(.)) %>%
-           magrittr::extract(endo.var, drop=FALSE) %>% 
+           magrittr::extract(endo.var, , drop=FALSE) %>% 
            as.data.frame %>% 
            mutate(coef=endo.var)) %>%
       ungroup %>% 
-      set_names(c("depvar", "est", "coef")) #, "se", "t.value", "p.value"))
+      set_names(c("depvar", "est", "se", "t.value", "p.value", "coef"))
     
     if (.bootstrap.se) {
       se <- foreach(seq_len(num.resample), .combine=cbind) %dopar% {
@@ -339,7 +344,7 @@ always.of.takers.rl <- function(.data, cluster, covar, endo.var, iv, estimator.t
   }
 }
 
-predict.rob <- function(x, vcov.=vcov(x), signif.level=0.05, newdata) {
+predict.rob <- function(x, vcov.=vcov(x), signif.level=0.05, drop.intercept=FALSE, newdata) {
   if (missing(newdata)) { 
     newdata <- x$model 
   }
@@ -354,7 +359,11 @@ predict.rob <- function(x, vcov.=vcov(x), signif.level=0.05, newdata) {
           if (any(mask)) drop.terms(trms, which(mask), keep.response=FALSE) else delete.response(trms) 
         }) 
     }) %>%
-    model.matrix(data=newdata)
+    model.matrix(data=newdata) 
+  
+  if (drop.intercept) {
+    m.mat[, 1] <- 0
+  }
   
   used.terms <- function(names) {
     ut <- names %>% sub("\\[.+", "", .) %>% grepl(newdata.col.re, .) 
@@ -378,29 +387,125 @@ predict.rob <- function(x, vcov.=vcov(x), signif.level=0.05, newdata) {
 
 vcov.clx <- function(fm, cluster) { # Taken from ivpack::clx()
   dfcw <- 1
-  M <- length(unique(cluster))
-  N <- length(cluster)
+  M <- NROW(unique(cluster))
+  N <- NROW(cluster)
+  
+  if (N != nrow(fm$model)) { # Need to match cluster to fitted model data
+    cluster %<>% merge(fm$model[, NULL], by="row.names", all=FALSE) %>% select(-Row.names)
+    N <- NROW(cluster)
+    
+    if (N != nrow(fm$model)) {
+      stop("Cannot match clusters with fitted model's data")
+    }
+  }
+
   dfc <- (M/(M - 1)) * ((N - 1)/(N - fm$rank))
   u <- apply(estfun(fm), 2, function(x) tapply(x, cluster, sum))
   
   dfc * sandwich(fm, meat. = crossprod(u)/N) * dfcw
 }
 
-icc <- function(.data, lhs, cluster, rhs=NULL) {
+icc <- function(.data, lhs, cluster, rhs=NULL, stratify=NULL, fixed.strata=FALSE, include.strata.var=FALSE) {
   formula.str <- sprintf("%s ~ (1|%s)", lhs, cluster)
   
   if (!is.null(rhs)) {
     formula.str %<>% paste(rhs, sep=" + ") 
   }
   
+  if (!is.null(stratify)) {
+    if (fixed.strata) {
+      formula.str %<>% paste(stratify, sep=" + ") 
+    } else {
+      formula.str %<>% paste(sprintf("(1|%s)", stratify), sep=" + ") 
+    }
+  }
+  
   .data %>%
-    lmer(formula(formula.str), data=., REML=FALSE) %>%
+    lmer(formula(formula.str), data=.) %>%
     summary %>%
     (function(sum.obj) {
       within.var <- sum.obj$varcor %>% magrittr::extract(cluster) %>% unlist(use.names=FALSE)
       between.var <- sum.obj$sigma^2
       
-      c(sqrt(within.var), sum.obj$sigma, within.var/(between.var + within.var)) %>%
-        set_names(c("within.sd", "between.sd", "icc"))
+      if (!is.null(stratify) && !fixed.strata) {
+        strata.var <- sum.obj$varcor %>% magrittr::extract(stratify) %>% unlist(use.names=FALSE) 
+      } else {
+        strata.var <- 0
+      }
+      
+      c(sqrt(within.var), sum.obj$sigma, within.var/(between.var + within.var + (include.strata.var * strata.var))) %>%
+        set_names(c("within.sd", "between.sd", "icc")) 
     })
 }
+
+wild.bootstrap <- function(.formula, .data, est.callback, cluster=NULL, bootstrap.rep=500) {
+  .formula %<>% c
+  
+  depvar.names <- paste0("wild.depvar", seq_along(.formula))
+  
+  reg.res <- systemfit(.formula, data=.data)
+  
+  .data <- reg.res$eq %>% 
+    map("fitted.values") %>% 
+    map2(reg.res$eq %>% map("residuals"), ~cbind(.x, .y) %>% as.data.frame) %>% 
+    # map2(reg.res$eq %>% map("model"), ~set_rownames(.x, rownames(.y))) %>% 
+    as.data.frame %>% 
+    set_names(paste0(c("fitted.", "residual."), rep(seq_along(.formula), each=2))) %>% 
+    bind_cols(.data, .)
+  
+  bootstrap.formula <- .formula %>% 
+    map(terms) %>% 
+    map(~attr(., "term.labels")) %>% 
+    map2(depvar.names, ~reformulate(.x, response=.y)) %>% 
+    set_names(names(.formula))
+  
+  foreach(seq_len(bootstrap.rep)) %dopar% {
+    .data %>%
+      { if (!is.null(cluster)) group_by_(., cluster) } %>% 
+      mutate_each(funs(sample(c(1, -1), 1)), num_range("residual.", seq_along(depvar.names))) %>% 
+      ungroup %>% 
+      { .[, depvar.names] <- select(., num_range("fitted.", seq_along(depvar.names))) + select(., num_range("residual.", seq_along(depvar.names))); return(.) } %>% 
+      systemfit(bootstrap.formula, data=.) %>% 
+      est.callback
+  }
+}
+
+estimate.ratio <- function(.formula, .data, cluster, bootstrap.rep=500, ratio.funs=funs(.[1]/(.[1] + .[2]))) { #data.frame(est=.[1]/(.[1] + .[regressors, 1]), 
+  reg.res <- plm(.formula, data=.data, model="pooling", index=cluster)
+  
+  reg.model <- reg.res$model
+  reg.model[, 1] <- 1
+  
+  fitted.and.resid <- (as.matrix(reg.model) %*% reg.res$coefficients) %>% 
+    
+    as.data.frame %>% 
+    set_names("fitted") %>%
+    mutate(residual=residuals(reg.res)) %>% 
+    set_rownames(rownames(reg.model))
+          
+  .data %<>% merge(fitted.and.resid, by="row.names", all=FALSE)
+  
+  bootstrap.formula <- .formula %>% 
+    terms %>% 
+    attr("term.labels") %>% 
+    reformulate(response="wild.depvar")
+          
+  foreach(seq_len(bootstrap.rep), .combine=bind_rows) %dopar% {
+    .data %>%
+      group_by_(cluster[1]) %>%
+      mutate(wild.depvar=fitted + (sample(c(1, -1), 1) * residual)) %>%
+      plm(bootstrap.formula, data=., model="pooling", index=cluster) %>%
+      coeftest(vcov=plm::vcovHC(., type="HC2", cluster="group")) %>%
+      magrittr::extract(,) %>% as.data.frame %>% rename(est=Estimate) %>%
+      summarize_each(ratio.funs, est)
+#       { data.frame(est=.[1]/(.[1] + .[regressors, 1]), 
+#                    regressor=regressors) }
+  } %>%
+    summarize_each(funs(mean, sd), est) 
+}
+
+calc.mdes <- function(sig.level=0.05, power=0.8, alloc.frac=0.5, num.clust, clust.size, icc) {
+  M <- qt(sig.level/2, df=num.clust - 2, lower.tail=FALSE) + qt(power, df=num.clust - 2)
+
+  (M / sqrt(alloc.frac * (1 - alloc.frac) * num.clust)) * sqrt(icc + (((1 - icc) / clust.size)))
+}  
