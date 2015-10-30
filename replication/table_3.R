@@ -1,4 +1,4 @@
-source("../util.R")
+source("util.R")
 
 library(ggplot2)
 
@@ -12,9 +12,17 @@ tryCatch({
 r2.migrants.data <- read.dta(paste0(config$data_path, "/mobarak_seasonal_migration/r2_migrants.dta"))
 r2.mig.data <- read.dta(paste0(config$data_path, "/mobarak_seasonal_migration/Round2_Migration_byHH.dta"))
 
-round1.data <- read.dta(paste0(config$data_path, "/mobarak_seasonal_migration/Round1_Controls_Table1.dta"))
-
 # round2.sec16b1.data <- read.dta(paste0(config$data_path, "/mobarak_seasonal_migration/internal/round2/hh_section16b1.dta"))
+
+# vill.treat.data <- read.dta13(paste0(config$data_path, "/mobarak_seasonal_migration/internal/Treatment_2008_to_2014_village.dta")) 
+
+vill.info.data <- read.csv(paste0(config$data_path, "/mobarak_seasonal_migration/internal/vill_branch_info.csv")) %>%
+  rename(incentive.2014=incentive,
+         upazila.name=upazila) %>%
+  mutate(txt.dist.branch.office=dist.branch.office,
+         dist.branch.office=sub("km", "", dist.branch.office, ignore.case=TRUE) %>% as.numeric) %>% 
+  inner_join(read.dta13(paste0(config$data_path, "/mobarak_seasonal_migration/internal/Treatment_2008_to_2014_village.dta")),
+             by=c("village"="vill_num"))
 
 round2.sec16.data <- read.dta(paste0(config$data_path, "/mobarak_seasonal_migration/internal/round2/hh_section16b.dta")) %>%
   transmute(hhid,
@@ -32,28 +40,8 @@ round2.sec16.data <- read.dta(paste0(config$data_path, "/mobarak_seasonal_migrat
             num.migrate=sum(num.migrate, na.rm=TRUE)) %>% 
   ungroup
 
-vill.rdrs.dist.data <- read.csv(paste0(config$data_path, "/mobarak_seasonal_migration/internal/dist_vill_rdrs.csv")) %>%
-  transmute(village.id=Village..Number,
-            rdrs.dist=Distance) %>%
-  mutate(rdrs.dist=sub("km", "", rdrs.dist, ignore.case=TRUE) %>% as.numeric,
-         rdrs.dist.q=rdrs.dist %>% cut(quantile(., probs=seq(0, 1, 1/3))),
-         rdrs.dist.f=rdrs.dist %>% cut(range(.) %>% multiply_by(c(-1, 1)) %>% sum %>% multiply_by(seq(0, 1, 0.25))),
-         rdrs.dist.far=1*(rdrs.dist > 10))
-
-round2.data <- read.dta(paste0(config$data_path, "/mobarak_seasonal_migration/Round2.dta"), convert.factors=FALSE) %>% 
-  tbl_df %>% 
-  filter(hhid != 92, !is.na(village)) %>% 
-  mutate(cluster.id=village,
-         incentive2=ifelse(control + info > 0, "control", incentive) %>% factor(levels=c("control", "credit", "cash")),
-         groupnature=factor(groupnature) %>% relevel(ref="individual")) %>% 
-         # incentivized=1*(incentivized == "Incentivized")) %>%
-  # mutate_each(funs(ifelse(is.na(.), NA, ifelse(. == "Yes", 1, 0))), migrant, migrant_new) %>%
-  mutate_each(funs(factor), incentive) %>% 
-  mutate(incentive=relevel(incentive, ref="control")) %>% 
-  left_join(round2.sec16.data, by="hhid") %>% 
-  mutate(ngo.help.migrate=1*(ngo.help.migrate & migrant)) %>% 
-  left_join(round3.data %>% select(hhid, migrant_r2)) %>%
-  left_join(vill.rdrs.dist.data, c("village"="village.id"))
+round1.data <- read.dta(paste0(config$data_path, "/mobarak_seasonal_migration/Round1_Controls_Table1.dta"), convert.factors=FALSE) %>% 
+  left_join(vill.info.data, by="village")
 
 round3.data <- read.dta(paste0(config$data_path, "/mobarak_seasonal_migration/Round3.dta")) %>% 
   tbl_df %>%
@@ -61,7 +49,23 @@ round3.data <- read.dta(paste0(config$data_path, "/mobarak_seasonal_migration/Ro
   mutate(cluster.id=village,
          migrant_r2=ifelse(is.na(migrant_r2), NA, ifelse(migrant_r2 == "Yes", 1, 0))) %>% 
   merge(round1.data, by="hhid", all.x=TRUE, all.y=FALSE, suffixes=c("", ".y")) %>% 
-  select(-ends_with(".y")) 
+  select(-ends_with(".y")) %>% 
+  # left_join(vill.treat.data %>% mutate_each(funs(factor), village_2014), by=c("village"="village_2014")) %>%
+  left_join(vill.info.data, by=c("vill_num"="village"))
+
+round2.data <- read.dta(paste0(config$data_path, "/mobarak_seasonal_migration/Round2.dta"), convert.factors=FALSE) %>% 
+  filter(hhid != 92, !is.na(village)) %>% 
+  mutate(cluster.id=village,
+         incentive2=ifelse(control + info > 0, "control", incentive) %>% factor(levels=c("control", "credit", "cash")),
+         groupnature=factor(groupnature) %>% relevel(ref="individual")) %>% 
+         # incentivized=1*(incentivized == "Incentivized")) %>%
+  # mutate_each(funs(ifelse(is.na(.), NA, ifelse(. == "Yes", 1, 0))), migrant, migrant_new) %>%
+  mutate_each(funs(factor), incentive, upazila, lit) %>% 
+  mutate(incentive=relevel(incentive, ref="control")) %>% 
+  left_join(round2.sec16.data, by="hhid") %>% 
+  mutate(ngo.help.migrate=1*(ngo.help.migrate & migrant)) %>% 
+  merge(round3.data %>% select(hhid, migrant_r2, starts_with("average_calorie")), all.x=TRUE, all.y=FALSE, by="hhid", suffixes=c("", ".r3")) %>%
+  left_join(vill.info.data, by="village") 
 
 depvars_T1_08 <- c("average_food2", "average_nonfood2", "average_exp2",  "average_calorie_perday2") 
 depvars_T1_09 <- c("average_food2", "average_nonfood2", "average_exp2", "average_calorie_perday2", "average_protein_perday2")
@@ -78,9 +82,9 @@ all.treat.1 <- "incentivized"
 all.treat.2 <- c("cash", "credit", "info")
 all.treat.3 <- c("cash", "credit")
 
-ols.regress.fun.r2 <- regress.fun.factory(depvars=depvars_T1_08, 
-                                       controls=c("upazila"), # controls.r2), 
-                                       coef=all.treat.3, 
+ols.regress.fun.r2 <- regress.fun.factory(depvars=c("migrant", "migrant_new", depvars_T1_08), 
+                                       controls=c("branch.office"), #upazila"), #, controls.r2), 
+                                       coef=all.treat.2, 
                                        cluster=c("cluster.id", "hhid"))
 
 ols.regress.fun.r3 <- regress.fun.factory(depvars=depvars_T1_09, 
@@ -118,10 +122,7 @@ iv.qr.fun <- iv.qr.fun.factory(depvars="average_calorie_perday2", #depvars_T1_09
                          cluster="cluster.id",
                          tau=c(0.1, 0.25, 0.5, 0.75, 0.9))
 
-first.stage.regress.fun <- regress.fun.factory(depvars="migrant_r2", 
-                                               controls=c("upazila", controls.r3), 
-                                               coef=all.treat.1, 
-                                               cluster="cluster.id")
+
 
 iv.regress.fun <- iv.regress.fun.factory(depvars=depvars_T1_09, 
                                          controls=c("upazila", controls.r3), 
@@ -130,9 +131,10 @@ iv.regress.fun <- iv.regress.fun.factory(depvars=depvars_T1_09,
                                          cluster="cluster.id")
 
 iv.regress.fun.r2 <- iv.regress.fun.factory(depvars=depvars_T1_08, 
-                                         controls=c("upazila", controls.r2), 
-                                         endo.var="migrant_r2",
-                                         iv=all.treat.1, 
+                                         controls=c("branch.office", controls.r2), 
+                                         # endo.var="ngo.help.migrate", 
+                                         endo.var="migrant_new",
+                                         iv=all.treat.2, 
                                          cluster="cluster.id")
 
 ngo.help.iv.fun <- iv.regress.fun.factory(depvars=depvars_T1_08, 
@@ -143,6 +145,8 @@ ngo.help.iv.fun <- iv.regress.fun.factory(depvars=depvars_T1_08,
 
 test.results.r2 <- ols.regress.fun.r2(round2.data) #%>%
   # arrange(desc(abs(t.value)))
+
+iv.regress.fun.r2(round2.data)
 
 # test.results <- ols.regress.fun(round3.data) %>%
 #   arrange(desc(abs(t.value)))
@@ -163,6 +167,7 @@ ngo.help.iv.results <- round2.data %>% filter(incentivized == 1, migrant == 1) %
 
 incentive.pred.data <- data.frame(incentive2=levels(round2.data$incentive2) %>% factor(., levels=.))
 dist.incentive.pred.data <- expand.grid(cash=0:1, rdrs.dist.far=0:1)
+dist.incentive.pred.data.2 <- expand.grid(cash=0:1, dist.branch.office=0:10)
 
 round2.data %>% 
   filter(!is.na(village)) %>% 
@@ -199,33 +204,35 @@ ngo.help.pred.data <- round2.data %>%
 
 migrate.dist.pred.data <- round2.data %>% 
   filter(!is.na(village), incentivized == 1) %>% 
-  plm(migrant ~ rdrs.dist.far*cash, data=., model="pooling", index=c("village", "hhid")) %>% 
+  # plm(migrant ~ poly(dist.branch.office, 2, raw=TRUE)*cash, data=., model="pooling", index=c("village", "hhid")) %>% 
+  plm(migrant ~ poly(dist.branch.office, 2, raw=TRUE), data=., model="pooling", index=c("village", "hhid")) %>% 
+  # plm(migrant ~ dist.branch.office*cash + I(dist.branch.office^2)*cash, data=., model="pooling", index=c("village", "hhid")) %>% 
   # coeftest(vcov=plm::vcovHC(., cluster="group")))
-  predict.rob(signif.level=0.1, vcov=plm::vcovHC(., cluster="group"), newdata=dist.incentive.pred.data) %>% 
-  as.data.frame %>% 
-  bind_cols(dist.incentive.pred.data) %>% 
+  # predict.rob(signif.level=0.1, vcov=plm::vcovHC(., cluster="group"), newdata=dist.incentive.pred.data) %>% 
+  # predict.rob(signif.level=0.1, vcov=plm::vcovHC(., cluster="group"), newdata=dist.incentive.pred.data.2) %>% 
+  predict.poly.rob(signif.level=0.1, vcov=plm::vcovHC(., cluster="group")) %>% 
   mutate(depvar="migrant")
 
 ngo.help.dist.pred.data <- round2.data %>% 
   filter(!is.na(village), incentivized == 1) %>% 
-  plm(ngo.help.migrate ~ rdrs.dist.far*cash, data=., model="pooling", index=c("village", "hhid")) %>% 
+  # plm(ngo.help.migrate ~ rdrs.dist.far*cash, data=., model="pooling", index=c("village", "hhid")) %>% 
+  # plm(ngo.help.migrate ~ poly(dist.branch.office, 2, raw=TRUE)*cash, data=., model="pooling", index=c("village", "hhid")) %>% 
+  plm(ngo.help.migrate ~ poly(dist.branch.office, 2, raw=TRUE), data=., model="pooling", index=c("village", "hhid")) %>% 
   # coeftest(vcov=plm::vcovHC(., cluster="group"))
-  predict.rob(signif.level=0.1, vcov=plm::vcovHC(., cluster="group"), newdata=dist.incentive.pred.data) %>% 
-  as.data.frame %>% 
-  bind_cols(dist.incentive.pred.data) %>% 
+  predict.poly.rob(signif.level=0.1, vcov=plm::vcovHC(., cluster="group")) %>% 
+  # predict.rob(signif.level=0.1, vcov=plm::vcovHC(., cluster="group"), newdata=dist.incentive.pred.data.2) %>% 
+#   as.data.frame %>% 
+#   bind_cols(dist.incentive.pred.data.2) %>% 
   mutate(depvar="ngo.help.migrate")
 
-theme_set(theme_bw() + 
-            theme(panel.border=element_rect(color=NA), 
-                  axis.ticks=element_blank(), 
-                  strip.background=element_rect(color=NA, size=2)))
 
 migrate.pred.data %>% 
   bind_rows(ngo.help.pred.data) %>% 
   mutate_each(funs(ifelse(is.nan(.), 0, .)), fit.max, fit.min) %>% 
-  ggplot(aes(x=incentive2, group=depvar)) + 
-  geom_line(aes(y=fit, color=depvar)) + 
-  geom_point(aes(y=fit, color=depvar)) +
+  ggplot(aes(x=incentive2, y=fit, group=depvar)) + 
+  geom_line(aes(color=depvar)) + 
+  geom_point(aes(color=depvar)) +
+  geom_text(aes(y=fit + 0.02, label=ifelse(fit < 0, "", sprintf("%.2f", fit))), size=4) +
   geom_ribbon(aes(ymax=fit.max, ymin=fit.min, fill=depvar), alpha=0.2) +
   scale_x_discrete("", labels=c("Control/info", "Credit", "Cash")) +
   scale_y_continuous("Proportion") +
@@ -236,16 +243,18 @@ migrate.pred.data %>%
 migrate.dist.pred.data %>% 
   bind_rows(ngo.help.dist.pred.data) %>% 
   mutate_each(funs(ifelse(is.nan(.), 0, .)), fit.max, fit.min) %>% 
-  mutate_each(funs(factor), rdrs.dist.far, cash) %>% 
+  # mutate_each(funs(factor), cash) %>% 
   mutate(depvar=factor(depvar, levels=c("migrant", "ngo.help.migrate"), labels=c("Migration", "NGO Assistance Take-up"))) %>%
-  ggplot(aes(x=rdrs.dist.far, group=cash)) + 
-  geom_line(aes(y=fit, color=cash)) + 
-  geom_point(aes(y=fit, color=cash)) +
-  geom_ribbon(aes(ymax=fit.max, ymin=fit.min, fill=cash), alpha=0.2) +
-  scale_x_discrete("Distance from Nearest RDRS Office", labels=c("Near", "Far (>7 km)")) +
+  ggplot(aes(x=dist.branch.office)) + #, group=cash)) + 
+  geom_line(aes(y=fit)) + #, color=cash)) + 
+#   geom_text(aes(y=fit + ifelse(cash == "1", 1, -1) * 0.02, label=ifelse(fit < 0, "", sprintf("%.2f", fit))), size=4) +
+#   geom_point(aes(y=fit, color=cash)) +
+  # geom_ribbon(aes(ymax=fit.max, ymin=fit.min, fill=cash), alpha=0.2) +
+  geom_ribbon(aes(ymax=fit.max, ymin=fit.min), alpha=0.2) +
+  # scale_x_discrete("Distance from Nearest RDRS Office", labels=c("Near", "Far (>7 km)")) +
   scale_y_continuous("Proportion") +
-  scale_fill_discrete("Incentive", labels=c("Credit", "Cash")) +
-  scale_color_discrete("Incentive", labels=c("Credit", "Cash")) +
+#   scale_fill_discrete("Incentive", labels=c("Credit", "Cash")) +
+#   scale_color_discrete("Incentive", labels=c("Credit", "Cash")) +
   facet_wrap(~ depvar) +
   theme(legend.position="top")
 
@@ -275,3 +284,8 @@ critical.pts <- max.w %>%
 
 (test.results %<>% bind_cols(critical.pts))
 
+# migration ICC per branch
+round2.data %>% filter(!is.na(village), !is.na(RDRS.Office.Location.Name)) %>% icc(lhs="migrant", cluster="RDRS.Office.Location.Name", rhs="incentive")
+
+# assitance take-up ICC per branch
+round2.data %>% filter(!is.na(village), !is.na(RDRS.Office.Location.Name), incentivized == 1) %>% icc(lhs="ngo.help.migrate", cluster="RDRS.Office.Location.Name", rhs="cash")

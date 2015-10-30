@@ -344,6 +344,31 @@ always.of.takers.rl <- function(.data, cluster, covar, endo.var, iv, estimator.t
   }
 }
 
+predict.poly.rob <- function(reg.res, vcov.=vcov(reg.res), distinct.data=TRUE, signif.level=0.05) {
+  poly.renamer <- . %>%
+    set_names(sub("poly\\(([^,]+).+\\)1?$", "\\1", names(.)))
+  
+  reg.res.model.mat <- reg.res %>% 
+    model.matrix 
+  
+  se.fit <- reg.res.model.mat %>% 
+    { . %*% vcov. %*% t(.) } %>% 
+    diag %>% 
+    sqrt 
+  
+  reg.res.model.mat %>% 
+    as.data.frame %>% 
+    poly.renamer %>% 
+    magrittr::extract(, intersect(names(.), names(poly.renamer(reg.res$model))),drop=FALSE) %>% 
+    bind_cols(as.data.frame(as.matrix(reg.res.model.mat) %*% reg.res$coefficients)) %>% 
+    rename(fit=V1) %>% 
+    mutate(se.fit=se.fit,
+           merr=qnorm(signif.level/2, lower.tail=FALSE) * se.fit,
+           fit.min=fit - merr,
+           fit.max=fit + merr) %>% 
+    { if (distinct.data) distinct(.) else . }
+}
+
 predict.rob <- function(x, vcov.=vcov(x), signif.level=0.05, drop.intercept=FALSE, newdata) {
   if (missing(newdata)) { 
     newdata <- x$model 
@@ -505,7 +530,13 @@ estimate.ratio <- function(.formula, .data, cluster, bootstrap.rep=500, ratio.fu
 }
 
 calc.mdes <- function(sig.level=0.05, power=0.8, alloc.frac=0.5, num.clust, clust.size, icc) {
-  M <- qt(sig.level/2, df=num.clust - 2, lower.tail=FALSE) + qt(power, df=num.clust - 2)
-
-  (M / sqrt(alloc.frac * (1 - alloc.frac) * num.clust)) * sqrt(icc + (((1 - icc) / clust.size)))
+  if (missing(icc)) {
+    M <- qnorm(sig.level/2, lower.tail=FALSE) + qnorm(power)
+    
+    return((M / sqrt(alloc.frac * (1 - alloc.frac))) * sqrt(1 / clust.size))
+  } else {
+    M <- qt(sig.level/2, df=num.clust - 2, lower.tail=FALSE) + qt(power, df=num.clust - 2)
+    
+    return((M / sqrt(alloc.frac * (1 - alloc.frac) * num.clust)) * sqrt(icc + (((1 - icc) / clust.size))))
+  }
 }  
