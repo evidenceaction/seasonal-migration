@@ -1,0 +1,55 @@
+---
+title: "NLS Uncondtional Cash Transfers"
+output: pdf_document
+header-includes:
+   - \usepackage{pxfonts}
+---
+
+# Framework
+
+## Experimental Treatment
+
+* Let $i$ be the individual/household level index and $j$ be the village level index.
+* Let the _conditional cash transfers_ (incentives for migration) treatment indicator be $Z^C_{j} \in \{0, 1\}$. 
+* Let the _unconditional cash transfers_ treatment indicator be $Z^U_{ij} \in \{0, 1\}$. For simplicity, I am assuming a fixed size for the transfer. I am also assuming that this treatment will be randomized at the household level.
+
+## Migration
+
+Let the intermediate migration variable be $M_{ij}(z^c)$, responding only to the conditional cash transfer.
+
+##### Assumption 1
+
+Holding fixed the migration incentive treatment $Z^C_j = z^c$, migration is not affected by the unconditional cash transfer.
+\[ M_{ij}(Z^C_{j} = z^c, Z^U_{ij} = 0) = M_{ij}(Z^C_j = z^c, Z^U_{ij} = 1), \forall i,j,z^c \]
+
+We divide the population into the following sub-populations:
+
+1. _always migrants_: $M_{ij}(1) = M_{ij}(0) \implies S_{ij} = a$
+2. _complier migrants_: $M_{ij}(1) > M_{ij}(0) \implies S_{ij} = c$
+3. _never migrants_: $M_{ij}(1) = M_{ij}(0) \implies S_{ij} = n$
+
+We use $S_{ij} \in \{a, c, n\}$ to simplify our notation.
+
+##### Assumption 2
+
+Monotonicity of $M_{ij}(z^c)$, such that $\Pr(M_{ij}(1) < M_{ij}(0)) = 0$.
+
+## Outcome 
+
+Let the dependent variable be $Y_{ij}(z^u, m)$, potentially affected by migration and unconditional cash transfers.
+
+##### Assumption 3
+
+Holding fixed the unconditional cash transfer treatment $Z^U_{ij} = z^u$ and migration decision $m$, all final outcomes are not affected by the migration incentive.
+\[ Y_{ij}(Z^C_{j} = 0, Z^U_{ij} = z^u, m) = Y_{ij}(Z^C_j = 1, Z^U_{ij} = z^u, m), \forall i,j,z^u,m \]
+
+# Identification
+
+Given the random assignment of treatments $Z^C_j$ and $Z^U_{ij}$,
+\[ \{ Y_{ij}(z^u, m), M_{ij}(z^c); \forall z^u, z^c, m\} \Perp (Z^C_j, Z^U_{ij}), \]
+we can identify the following:
+
+1. $E[Y_{ij}(1,0) - Y_{ij}(0,0)| S_{ij} = n] = E[Y_{ij}|Z^C_j = 1, Z^U_{ij} = 1, M_{ij} = 0] - E[Y_{ij}|Z^C_j = 1, Z^U_{ij} = 0, M_{ij} = 0]$ 
+2. $E[Y_{ij}(1,1) - Y_{ij}(0,1)| S_{ij} \in \{c, a\}] = E[Y_{ij}|Z^C_j = 1, Z^U_{ij} = 1, M_{ij} = 1] - E[Y_{ij}|Z^C_j = 1, Z^U_{ij} = 0, M_{ij} = 1]$ 
+3. $E[Y_{ij}(1,1) - Y_{ij}(0,1)| S_{ij} = a] = E[Y_{ij}|Z^C_j = 0, Z^U_{ij} = 1, M_{ij} = 1] - E[Y_{ij}|Z^C_j = 0, Z^U_{ij} = 0, M_{ij} = 1]$ 
+4. $E[Y_{ij}(1,1) - Y_{ij}(0,1)| S_{ij} \in \{n, c\}] = E[Y_{ij}|Z^C_j = 1, Z^U_{ij} = 1, M_{ij} = 1] - E[Y_{ij}|Z^C_j = 1, Z^U_{ij} = 0, M_{ij} = 1]$ 

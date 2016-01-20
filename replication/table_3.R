@@ -83,7 +83,7 @@ all.treat.2 <- c("cash", "credit", "info")
 all.treat.3 <- c("cash", "credit")
 
 ols.regress.fun.r2 <- regress.fun.factory(depvars=c("migrant", "migrant_new", depvars_T1_08), 
-                                       controls=c("branch.office"), #upazila"), #, controls.r2), 
+                                       controls=c("upazila", controls.r2), 
                                        coef=all.treat.2, 
                                        cluster=c("cluster.id", "hhid"))
 
@@ -131,17 +131,17 @@ iv.regress.fun <- iv.regress.fun.factory(depvars=depvars_T1_09,
                                          cluster="cluster.id")
 
 iv.regress.fun.r2 <- iv.regress.fun.factory(depvars=depvars_T1_08, 
-                                         controls=c("branch.office", controls.r2), 
+                                         controls=c("upazila", controls.r2), 
                                          # endo.var="ngo.help.migrate", 
                                          endo.var="migrant_new",
                                          iv=all.treat.2, 
-                                         cluster="cluster.id")
+                                         cluster="village")
 
 ngo.help.iv.fun <- iv.regress.fun.factory(depvars=depvars_T1_08, 
                                          controls=c("upazila", controls.r2), 
                                          endo.var="ngo.help.migrate",
                                          iv="cash", #all.treat.2, 
-                                         cluster="cluster.id")
+                                         cluster="village") #cluster.id")
 
 test.results.r2 <- ols.regress.fun.r2(round2.data) #%>%
   # arrange(desc(abs(t.value)))
@@ -151,7 +151,7 @@ iv.regress.fun.r2(round2.data)
 # test.results <- ols.regress.fun(round3.data) %>%
 #   arrange(desc(abs(t.value)))
 
-ngo.help.results <- round2.data %>% filter(migrant == 1) %>% ngo.help.ols.fun
+ngo.help.results <- round2.data %>% ngo.help.ols.fun
 
 qr.test.results.r2 <- qr.fun.r2(round2.data) %>%
   arrange(depvar, tau)
@@ -163,7 +163,8 @@ qr.test.results.r2 <- qr.fun.r2(round2.data) %>%
 # iv.test.results <- iv.regress.fun(round3.data) %>%
 #   arrange(desc(abs(t.value)))
 
-ngo.help.iv.results <- round2.data %>% filter(incentivized == 1, migrant == 1) %>% ngo.help.iv.fun
+# ngo.help.iv.results <- round2.data %>% filter(incentivized == 1, migrant == 1) %>% ngo.help.iv.fun
+ngo.help.iv.results <- round2.data %>% filter(incentivized == 1) %>% ngo.help.iv.fun
 
 incentive.pred.data <- data.frame(incentive2=levels(round2.data$incentive2) %>% factor(., levels=.))
 dist.incentive.pred.data <- expand.grid(cash=0:1, rdrs.dist.far=0:1)
@@ -289,3 +290,24 @@ round2.data %>% filter(!is.na(village), !is.na(RDRS.Office.Location.Name)) %>% i
 
 # assitance take-up ICC per branch
 round2.data %>% filter(!is.na(village), !is.na(RDRS.Office.Location.Name), incentivized == 1) %>% icc(lhs="ngo.help.migrate", cluster="RDRS.Office.Location.Name", rhs="cash")
+
+transfer.impact.fun <- regress.fun.factory(depvars=c(depvars_T1_08), 
+                                       controls=c("upazila", controls.r2), 
+                                       coef="cash", #all.treat.2, 
+                                       cluster=c("village", "hhid"), 
+                                       inner.reg=function(.data, depvar) {
+                                         inner.reg.fun <- function(.depvar) {
+                                           # lm(formula(sprintf("%s ~ %s", .depvar, paste(c("cash", "upazila", controls.r2), collapse="+"))), data=.data) %>% 
+                                           lm(formula(sprintf("%s ~ %s", .depvar, paste(c("cash"), collapse="+"))), data=.data) %>% 
+                                             coeftest %>%
+                                             magrittr::extract("cash", "Estimate", drop=FALSE) 
+                                             # as.data.frame %>%
+                                             # set_names(c("est", "se.conv", "t.value.conv", "p.value.conv"))
+                                         }
+                                         
+                                         numerator <- inner.reg.fun(depvar)
+                                         denom.1 <- inner.reg.fun("ngo.help.migrate")
+                                         denom.2 <- inner.reg.fun("migrant_new")
+                                         
+                                         data.frame(est=numerator/(denom.1 - denom.2))
+                                       })

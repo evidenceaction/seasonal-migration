@@ -1,5 +1,5 @@
 ---
-title: "No Lean Season Cash vs Credit Comparative Cost-Effectiveness"
+title: "No Lean Season Secondary Research"
 author: "Evidence Action"
 output:
   pdf_document:
@@ -25,7 +25,7 @@ theme_set(theme_bw() +
 
 tryCatch({
   config <- yaml.load_file("local_config.yaml")
-  registerDoParallel(cores=config$cores - 1)
+  registerDoParallel(cores=config$cores - 2)
 }, error=function(err) {
   registerDoSEQ()
 })
@@ -40,7 +40,7 @@ vill.info.data <- read.csv(paste0(config$data_path, "/mobarak_seasonal_migration
   inner_join(read.dta13(paste0(config$data_path, "/mobarak_seasonal_migration/internal/Treatment_2008_to_2014_village.dta")),
              by=c("village"="vill_num")) %>% 
   mutate_each(funs(factor), branch.office)
-
+# 
 round2.sec16.data <- read.dta(paste0(config$data_path, "/mobarak_seasonal_migration/internal/round2/hh_section16b.dta")) %>%
   transmute(hhid,
             mid,
@@ -83,7 +83,8 @@ round3.data <- read.dta(paste0(config$data_path, "/mobarak_seasonal_migration/Ro
          incentive2=ifelse(control + info > 0, "control", ifelse(cash, "cash", "credit")) %>% factor(levels=c("control", "credit", "cash"))) %>% 
   left_join(vill.info.data, by="village") %>%
   mutate_each(funs(factor), village, upazila) %>% 
-  mutate_each(funs(relevel(., ref="control")), incentive2) 
+  mutate_each(funs(relevel(., ref="control")), incentive2) %>% 
+  mutate(migrant_r2andr3=migrant_r2 * migrant_r3)
   
 incentive.pred.data <- round2.data %>% select(incentive) %>% distinct 
 incentive2.pred.data <- round2.data %>% select(incentive2) %>% distinct 
@@ -136,16 +137,22 @@ offer.accepted.pred.data <- round2.data %>%
 #   filter(!is.na(village), incentive %in% c("credit", "cash")) %>% 
 #   estimate.ratio(migrant ~ cash, .data=., c("village", "hhid"), 1000)
 
-phi.1.est <- round2.data %>% 
-  filter(!is.na(village), !is.na(migrant)) %>%
-  estimate.ratio(migrant ~ cash + credit, .data=., c("village", "hhid"), ratio.funs=funs((.[2] - .[3])/(.[2])), 1000)
+depvars_T1_08 <- c("average_food2", "average_nonfood2", "average_exp2",  "average_calorie_perday2") 
+depvars_T1_09 <- c("average_food2", "average_nonfood2", "average_exp2", "average_calorie_perday2", "average_protein_perday2")
+appvars_AT4_09 <- c("average_edu_exp_kds2", "average_cloths_shoes2", "average_med_exp_f2", "average_med_exp_m2")
+all.depvars <- c(depvars_T1_09, appvars_AT4_09)
 
-phi.2.est <- round2.data %>% 
-  filter(!is.na(village), !is.na(ngo.help.migrate)) %>% 
-  estimate.ratio(ngo.help.migrate ~ cash + credit, .data=., c("village", "hhid"), ratio.funs=funs((.[2] - .[3])/(.[2])), 1000)
+controls.r2 <-c("lit", "walls_good", "monga", "dhaka_remit", "dhaka_network", "exp_total_pc_r1", "subsistencer1",
+                "num_adltmalesr1", "num_childrenr1", "avgQ13earned", "constrainedr1", "bankedr1")
+
+controls.r3 <- c("litr1", "walls_good", "monga", "dhaka_remit", "dhaka_network", "exp_total_pcr1", "subsistencer1",
+              "num_adltmalesr1", "num_childrenr1", "avgQ13earned", "constrainedr1", "bankedr1")
+
 ```
 
 # Introduction
+
+# Cash vs Credit Comparative Cost-Effectiveness
 
 This document considers the cost-effectiveness of two different types of seasonal migration incentives: _cash_ and _credit_ incentives. The former is a conditional cash transfer and the latter is a conditional zero-interest loan (both are conditional on migration). As the below chart shows, migration levels do not differ between both types of incentives (in terms of magnitude and statistical significance), while the take-up of incentives appears to substantially increase going from _credit_ to _cash_ incentives^[The chart reports incentive take-up based on two data sources, administrative and self-reported survey data. For the purpose of this analysis we focus on the latter. The chart also shows migration levels the year following the intervention.]. Therefore, we are interested in modelling the cost-effectiveness implications of implementing a scaled program based on either type of incentive.
 
@@ -157,7 +164,7 @@ dodge_obj <- position_dodge(0.75)
 migrate.08.pred.data %>% 
   bind_rows(migrate.09.pred.data) %>% 
   bind_rows(ngo.help.pred.data) %>% 
-  bind_rows(offer.accepted.pred.data) %>% 
+  # bind_rows(offer.accepted.pred.data) %>% 
   mutate_each(funs(ifelse(is.nan(.), 0, .)), fit.max, fit.min) %>% 
   ggplot(aes(x=incentive2, y=fit, group=depvar)) + 
   geom_bar(aes(fill=depvar), alpha=0.4, stat="identity", position=dodge_obj, width=0.7) +
@@ -167,39 +174,38 @@ migrate.08.pred.data %>%
   # scale_y_continuous("Proportion", breaks=seq(0, 0.45, by=0.05)) +
   scale_y_continuous("Proportion", breaks=seq(0, 0.90, by=0.05)) +
   # scale_fill_discrete("", labels=c("'08 Complier Migration", "'09 Complier Migration", "NGO Assistance Take-up")) +
-  scale_fill_discrete("", labels=c("'08 Complier Migration", "'09 Complier Migration", "Recipient (Survey Data)", "Recipient (Admin Data)")) +
+  scale_fill_discrete("", labels=c("'08 Complier Migration", "'09 Complier Migration", "Recipient (Survey Data)")) #, "Recipient (Admin Data)")) +
   # scale_color_discrete("", labels=c("'08 Complier Migration", "'09 Complier Migration", "NGO Assistance Take-up", "Accepted Offer (Admin Data)")) +
   # scale_color_discrete("", labels=c("Migration", "Migration '09", "NGO Assistance Take-up")) +
   theme(legend.position="right")
 ```
 
-# Model
+## Model
 
 This section presents the formal model that will be used to investigate the comparative cost-effectiveness of the two types of incentives.
 
-## Treatment Assignment 
+### Treatment Assignment 
 
 $Z_j \in \{ct, ca, cr\}$. Village $j$ is either a _control_, _cash incentive_, or _credit incentive_ cluster, respectively.
 
-## Potential Outcomes
+### Potential Outcomes
 
 For every household $i$:
 
-### Migration
+#### Migration
 
 $M_{ij}(z) \in \{0, 1\}$ such that $M(ca) \geq M(cr) \geq M(ct)$.
 
-### Incentive Take-up
+#### Incentive Take-up
 
 $S_{ij}(z) \in \{0, 1\}$ such that $S(ca) \geq S(cr)$, and $S(ct) = 0$.
 
-## Subpopulation Sizes
+### Subpopulation Sizes
 
 * Proportion of beneficiaries in response to treatment $z \in \{ca, cr\}$: \[\pi_z = \Pr[M_{ij}(z) > M_{ij}(ct)] = E[M_{ij}|Z_j = z] - E[M_{ij}|Z_j = ct]\]
 * Proportion of incentive takers in response to treatment $z \in \{ca, cr\}$: \[\delta_z = \Pr[S_{ij}(z) = 1] = E[S_{ij}|Z_j = z]\]
 
-
-## Migration and Incentive Take-up Errors
+### Migration and Incentive Take-up Errors
 
 There are two types of errors that drive the difference in cost-effectiveness between the two types of incentives.
 
@@ -208,7 +214,18 @@ There are two types of errors that drive the difference in cost-effectiveness be
 
 Type I errors are considered more serious and we should give priority to minimizing them. The below analysis of cost-effectiveness does not distinguish between the types of errors in terms of priority.
 
-# Cost-Effectiveness
+```{r phi-estimation, echo=FALSE}
+phi.1.est <- round2.data %>% 
+  filter(!is.na(village), !is.na(migrant)) %>%
+  estimate.ratio(migrant ~ cash + credit, .data=., c("village", "hhid"), ratio.funs=funs((.[2] - .[3])/(.[2])), 1000)
+
+phi.2.est <- round2.data %>% 
+  filter(!is.na(village), !is.na(ngo.help.migrate)) %>% 
+  estimate.ratio(ngo.help.migrate ~ cash + credit, .data=., c("village", "hhid"), ratio.funs=funs((.[2] - .[3])/(.[2])), 1000)
+```
+
+
+## Cost-Effectiveness
 
 For each incentive type $z$, cost-effectiveness is defined as 
 \[CE_z(EP; \phi_1, \phi_2) = \frac{\pi_z(\phi_1)\cdot EP}{C_z(\delta_z(\phi_2) \cdot EP)},\]
@@ -229,7 +246,7 @@ Hence, we can simplify \eqref{eq:ce-diff-1} to
   \Delta CE(EP; \phi_1, \phi_2) = EP\cdot \pi^* \left( \frac{1 - \phi_1}{C_{cr}(\delta^* \cdot EP\cdot (1 - \phi_2))} - \frac{1}{C_{ca}(\delta^* \cdot EP)} \right) \label{eq:ce-diff-2}
 \end{equation}
 
-## Simple Example
+### Simple Example
 
 A simple cost-effectiveness exercise focuses on a single branch providing incentive subsidies to 500 households. We assume that $\delta^* \cdot EP = 500$ (there are 500 recipients per branch) and thus
 \begin{equation*}
@@ -242,7 +259,7 @@ To simulate this difference in cost-effectiveness, $\Delta CE$, we present it tw
   \Delta CE_2(\phi_2) &= \Delta CE(\hat{\phi}_1, \phi_2) 
 \end{align*}
 
-### Cost Function
+#### Cost Function
 
 The below simple cost functions were take from very early budget estimates.
 
@@ -255,7 +272,7 @@ loan.disburse.cost <- function(num.disbursed, loan.recovery.rate=0.5)
   (1 - loan.recovery.rate) * num.disbursed * 1500
 ```
 
-### Plots
+#### Plots
 
 Below two plots are presented. The first shows the change in cost effectiveness as we vary either the type I or II error ($\phi_1$ and $\phi_2$). The second shows how the size of the beneficiary group changes in response to they type I error. The second plot is important to not overstate the benefit of minimizing the type II error (filtering out the non-beneficiary incentive recipients); measures of cost-effectiveness do demonstrate the absolute size of the beneficiaries.
 
@@ -304,14 +321,14 @@ data.frame(err=seq(0, 1, by=0.01)) %>%
   mutate(ce.1=simple.ce.diff(phi.1=err, phi.2=phi.2.est$mean),
          ce.2=simple.ce.diff(phi.1=phi.1.est$mean, phi.2=err)) %>% 
   gather(err.type, ce, -err) %>% 
-  mutate(ce=ce*1500) %>% 
+  mutate(ce=ce*1000) %>% 
   ggplot(aes(group=err.type)) +
   geom_hline(y=0) +
   geom_line(aes(x=err, y=ce, color=err.type)) + 
   geom_rect(aes(xmin=pmax(0, hat.phi.min), xmax=hat.phi.max, ymin=-Inf, ymax=Inf, fill=err.type), alpha=0.1, data=phi.est.data) +
   geom_vline(aes(xintercept=hat.phi, color=err.type), linetype="dashed", data=phi.est.data) +
   scale_x_continuous("Error") +
-  scale_y_continuous(expression(paste(Delta, "Beneficiaries per 1,500 taka")), breaks=-2:5) +
+  scale_y_continuous(expression(paste(Delta, "Beneficiaries per 1,000 taka")), breaks=-2:5) +
   coord_cartesian(ylim=c(-2, 5)) +
   scale_color_discrete("", labels=c("Type I Error", "Type II Error")) +
   scale_fill_discrete("", labels=c("Type I Error", "Type II Error")) +
@@ -329,7 +346,7 @@ data.frame(err=seq(0, 1, by=0.1)) %>%
   scale_y_continuous("Beneficiaries per Branch") 
 ```
 
-## Assumptions
+### Assumptions
 
 1. Welfare impacts are the same for the _cash-complier_ and _credit-complier_ subpopulation; the impact of migration on welfare is the same for the compliers in response to any type of incentive. Therefore, the comparison of cost-effectiveness focuses on the size of compliers per cost.
 2. The reference points $\pi^*$ and $\delta^*$ are deterministic.
@@ -419,3 +436,16 @@ data.frame(type.1.err=seq(0, 1, by=0.1)) %>%
   scale_color_discrete("Subsidy Type", labels=c("Cash", "Credit")) +
   theme(legend.position="top")
 ```
+
+# Repeat Migration Compliers
+
+```{r repeat-migrate-late, dependson="data", tidy=TRUE}
+round3.data %>% plm(migrant_r2andr3 ~ credit + cash, data=., model="pooling", index="village") %>% coeftest(vcov=vcovHC(., cluster="group"))
+
+repeat.migrate.iv.reg.fun <- regress.fun.factory(depvars_T1_09, c(controls.r3, "upazila"), "village", "migrant_r2andr3", iv=c("cash", "credit"))
+
+round3.data %>% 
+  repeat.migrate.iv.reg.fun %>% 
+  select(depvar, est, se.iv, se.iv_t.value, se.iv_p.value)
+```
+

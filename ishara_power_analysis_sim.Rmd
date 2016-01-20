@@ -1,0 +1,75 @@
+---
+title: "Ishara Power Analysis Simulation"
+author: "Evidence Action"
+date: "November 4, 2015"
+output: pdf_document
+---
+
+```{r global-settings, include=FALSE}
+source("util.R")
+
+library(ggplot2)
+
+config <- yaml.load_file("local_config.yaml")
+
+knitr::opts_chunk$set(cache=FALSE) 
+
+theme_set(theme_bw() + 
+            theme(panel.border=element_rect(color=NA), 
+                  axis.ticks=element_blank(), 
+                  strip.background=element_rect(color=NA, size=2)))
+
+# tryCatch({
+#   config <- yaml.load_file("local_config.yaml")
+#   registerDoParallel(cores=config$cores - 2)
+# }, error=function(err) {
+#   registerDoSEQ()
+# })
+
+load("simul.mde.RData")
+```
+
+# Minimum Detectable Effect
+
+```{r, echo=FALSE}
+plot.simul.mde <- function(.data, y.var, y.lab) {
+  .data %>% 
+    ggplot(aes_string(x="cluster.size", y=y.var, color="factor(treat.clust.size.incr)")) +
+    geom_line() +
+    geom_point() +
+    scale_x_continuous("Cluster Size") +
+    scale_y_continuous(y.lab) +
+    scale_color_discrete("Treatment Cluster Size Increase") +
+    # facet_grid(~ num.clust, labeller=function(var, val) sprintf("%d Clusters", val)) +
+    facet_wrap(~ num.clust, ncol=3) +
+    theme(legend.position="top")
+}
+```
+
+```{r, echo=FALSE, fig.height=10, fig.width=10}
+simul.mde.data %>% 
+  plot.simul.mde("treat.clust.se", "Minimum Detectable Effect") +
+  ggtitle("Treatment vs Control Power Analysis") 
+```
+
+```{r, echo=FALSE, fig.height=10, fig.width=10}
+simul.mde.data %>%
+  plot.simul.mde("treat.variant.clust.se", "Minimum Detectable Effect") +
+  ggtitle("Treatment Alternatives Power Analysis")
+```
+
+# Rejection Rate for Null Hypothesis
+
+```{r, echo=FALSE, fig.height=10, fig.width=10}
+simul.mde.data %>%
+  plot.simul.mde("treat.reject", "Probability of Rejecting Size 5% Two-Sided Test") +
+  # coord_cartesian(ylim=c(0, 0.10)) +
+  ggtitle("Testing Treatment vs Control")
+```
+
+```{r, echo=FALSE, fig.height=10, fig.width=10}
+simul.mde.data %>%
+  plot.simul.mde("treat.variant.reject", "Probability of Rejecting Size 5% Two-Sided Test") +
+  coord_cartesian(ylim=c(0, 0.10)) +
+  ggtitle("Testing Treatment Alternatives")
+```
