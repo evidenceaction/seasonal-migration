@@ -1,6 +1,7 @@
 library(plyr)
 library(tidyr)
 library(dplyr)
+library(purrr)
 library(magrittr)
 library(stringr)
 library(purrr)
@@ -42,11 +43,11 @@ bootstrap.c <- function(original.data, regress.fun, bootstrap.fun, original.test
   } 
 }
 
-regress.fun.factory <- function(depvars, controls, cluster, coef, iv=NULL, out.intercept=NULL, se.types=c("HC2", "HC3"), bootstrap.rep=500) {
+regress.fun.factory <- function(depvars, controls, cluster, coef, iv=NULL, out.intercept=NULL, se.types=c("HC2", "HC3"), bootstrap.rep=500, inner.reg=NULL) {
   out.coef <- c(coef, out.intercept)
-  
-  this.reg.fun <- function(.data) {
-    inner.reg <- function(depvar) {
+ 
+  if (is.null(inner.reg)) {
+    inner.reg <- function(.data, depvar) {
       if (is.null(iv)) {
         inner.reg.fun <- function(.inner.data, .depvar) plm(formula(sprintf("%s ~ %s", .depvar, paste(c(coef, controls), collapse=" + "))), data=.inner.data, model="pooling", index=cluster) 
       } else {
@@ -57,12 +58,12 @@ regress.fun.factory <- function(depvars, controls, cluster, coef, iv=NULL, out.i
                                                                             paste(c(iv, controls), collapse=" + "))),
                                                             data=.inner.data)
                                                               
-#         inner.reg.fun <- function(.inner.data, .depvar) plm(formula(sprintf("%s ~ %s | . - %s + %s", 
-#                                                                             .depvar, 
-#                                                                             paste(c(coef, controls), collapse=" + "),
-#                                                                             paste(coef, collapse=" - "), 
-#                                                                             paste(iv, collapse=" + "))), 
-#                                                             data=.inner.data, model="pooling", index=cluster) 
+  #         inner.reg.fun <- function(.inner.data, .depvar) plm(formula(sprintf("%s ~ %s | . - %s + %s", 
+  #                                                                             .depvar, 
+  #                                                                             paste(c(coef, controls), collapse=" + "),
+  #                                                                             paste(coef, collapse=" - "), 
+  #                                                                             paste(iv, collapse=" + "))), 
+  #                                                             data=.inner.data, model="pooling", index=cluster) 
       }
       
       reg.res <- inner.reg.fun(.data, depvar) 
@@ -93,7 +94,7 @@ regress.fun.factory <- function(depvars, controls, cluster, coef, iv=NULL, out.i
           
           return(se.vec)
         } else if (se.type == "iv") {
-          clx(reg.res, reg.res$model %>% merge(.data[, cluster[1]], by="row.names") %>% select_(cluster[1]) %>% unlist) %>% 
+          clx(reg.res, reg.res$model %>% merge(.data[, cluster[1], drop=FALSE], by="row.names") %>% select_(cluster[1]) %>% unlist) %>% 
             magrittr::extract(, "Std. Error")
         } else {
           tryCatch(plm::vcovHC(reg.res, type=se.type, cluster="group") %>% diag %>% sqrt, error=function(e) NULL)
@@ -112,14 +113,16 @@ regress.fun.factory <- function(depvars, controls, cluster, coef, iv=NULL, out.i
                     as.data.frame %>%
                     set_names(paste0("se.", se.types))) %>%
         mutate(se.max=apply(select(., starts_with("se.")), 1, max)) %>% #,
-#                t.value=est/se,
-#                p.value=pnorm(abs(t.value), lower.tail=FALSE) * 2) %>% 
+  #                t.value=est/se,
+  #                p.value=pnorm(abs(t.value), lower.tail=FALSE) * 2) %>% 
         mutate_each(funs(t.value=est/., p.value=pnorm(abs(est/.), lower.tail=FALSE) * 2), starts_with("se."))
     }
-    
+  }
+  
+  this.reg.fun <- function(.data) {
     data_frame(depvar=depvars) %>% 
       group_by(depvar) %>%
-      do(inner.reg(.$depvar)) %>%
+      do(inner.reg(.data, .$depvar)) %>%
       ungroup 
   }
   
