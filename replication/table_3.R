@@ -289,3 +289,28 @@ round2.data %>% filter(!is.na(village), !is.na(RDRS.Office.Location.Name)) %>% i
 
 # assitance take-up ICC per branch
 round2.data %>% filter(!is.na(village), !is.na(RDRS.Office.Location.Name), incentivized == 1) %>% icc(lhs="ngo.help.migrate", cluster="RDRS.Office.Location.Name", rhs="cash")
+
+combined.data <- round2.data %>% 
+  mutate(survey.round=2, 
+         round3=0) %>% 
+  select(-destination) %>% 
+  bind_rows(round3.data %>% 
+              mutate(survey.round=3,
+                     round3=1,
+                     hhid=factor(hhid),
+                     lit=factor(litr1),
+                     exp_total_pc_r1=exp_total_pcr1,
+                     migrant_new=migrant_r2)) %>% 
+  mutate(survey.round=factor(survey.round))
+
+combined.data %>% ivreg(formula(sprintf("average_calorie_perday2 ~ round3 + migrant_new + I(migrant_new * round3) + upazila + %s | . - I(migrant_new*round3) - migrant_new + (cash + credit + info)*round3", paste(controls.r2, collapse=" + "))), data=.) %>% coeftest(vcov.clx(., cluster=combined.data %>% select(village)))
+
+merged.data <- round3.data %>% 
+  select(hhid, average_calorie_perday2) %>% 
+  mutate(hhid=factor(hhid)) %>% 
+  inner_join(round2.data, by="hhid") %>% 
+  mutate(average_calorie_perday2=average_calorie_perday2.x + average_calorie_perday2.y)
+  
+merged.data %>% 
+  ivreg(formula(sprintf("average_calorie_perday2 ~ migrant_new + upazila + %s | . - migrant_new + cash + credit + info", paste(controls.r2, collapse=" + "))), data=.) %>% 
+  coeftest(vcov.clx(., cluster=merged.data %>% select(village)))

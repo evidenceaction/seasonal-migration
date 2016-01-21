@@ -1,7 +1,7 @@
 library(plyr)
+library(tidyr)
 library(dplyr)
 library(magrittr)
-library(tidyr)
 library(stringr)
 library(purrr)
 library(foreach)

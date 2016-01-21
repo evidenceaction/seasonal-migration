@@ -18,10 +18,10 @@ config <- yaml.load_file("local_config.yaml")
 
 knitr::opts_chunk$set(cache=TRUE) 
 
-theme_set(theme_bw() + 
-            theme(panel.border=element_rect(color=NA), 
-                  axis.ticks=element_blank(), 
-                  strip.background=element_rect(color=NA, size=2)))
+# theme_set(theme_bw() + 
+#             theme(panel.border=element_rect(color=NA), 
+#                   axis.ticks=element_blank(), 
+#                   strip.background=element_rect(color=NA, size=2)))
 
 tryCatch({
   config <- yaml.load_file("local_config.yaml")
