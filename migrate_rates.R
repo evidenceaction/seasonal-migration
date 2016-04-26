@@ -37,10 +37,10 @@ migrate.rates <- read.csv(paste0(config$data_path, "/mobarak_seasonal_migration/
 
 migrate.rates %>%
   ggplot(aes(x=year, y=fit, group=incentivized.08)) +
-  geom_bar(aes(fill=incentivized.08), stat="identity", alpha=0.5, position=dodge_obj, width=0.9) +
+  geom_bar(aes(fill=incentivized.08), stat="identity", position=dodge_obj, width=0.9) +
   geom_errorbar(aes(ymax=fit.max, ymin=fit.min), position=dodge_obj, width=0.2) +
-  geom_text(aes(y=fit + 0.015, label=sprintf("%.0f%%", round(fit*100))), size=3, hjust=-0.15, position=dodge_obj) +
+  geom_text(aes(y=fit + 0.015, label=sprintf("%.0f%%", round(fit*100))), size=5, hjust=-0.05, position=dodge_obj) +
   scale_x_discrete("", labels=c("2008", "2009", "2011")) +
   scale_y_continuous("Migration Rate", labels=percent) +
-  scale_fill_discrete("", labels=c("Non-Incentivized", "Incentivized in 2008")) +
-  theme(legend.position="bottom")
+  scale_fill_manual("", labels=c("Non-Incentivized", "Incentivized in 2008"), values = c("#FE6F87", "#E8E5E2")) +
+  theme(legend.position="bottom", text = element_text(size=20))
