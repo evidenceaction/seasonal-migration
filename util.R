@@ -466,7 +466,7 @@ icc <- function(.data, lhs, cluster, rhs=NULL, stratify=NULL, fixed.strata=FALSE
     })
 }
 
-wild.bootstrap <- function(.formula, .data, est.callback, cluster=NULL, bootstrap.rep=500) {
+wild.bootstrap <- function(.formula, .data, est.callback = function(reg.res) reg.res$coefficients, cluster=NULL, bootstrap.rep=500) {
   .formula %<>% c
   
   depvar.names <- paste0("wild.depvar", seq_along(.formula))
@@ -490,7 +490,7 @@ wild.bootstrap <- function(.formula, .data, est.callback, cluster=NULL, bootstra
   foreach(seq_len(bootstrap.rep)) %dopar% {
     .data %>%
       { if (!is.null(cluster)) group_by_(., cluster) } %>% 
-      mutate_each(funs(sample(c(1, -1), 1)), num_range("residual.", seq_along(depvar.names))) %>% 
+      mutate_each(funs(sample(. * c(1, -1), 1)), num_range("residual.", seq_along(depvar.names))) %>% 
       ungroup %>% 
       { .[, depvar.names] <- select(., num_range("fitted.", seq_along(depvar.names))) + select(., num_range("residual.", seq_along(depvar.names))); return(.) } %>% 
       systemfit(bootstrap.formula, data=.) %>% 
